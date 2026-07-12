@@ -8,6 +8,22 @@ class Settings:
     app_env: str = os.getenv("APP_ENV", "development")
     ai_mode: str = os.getenv("AI_MODE", "mock").lower()
     provider_mode: str = os.getenv("AI_PROVIDER_MODE", "local").lower()
+    ai_provider: str = os.getenv("AI_PROVIDER", os.getenv("AI_PROVIDER_MODE", "local")).lower()
+    bitmind_enabled: bool = os.getenv("BITMIND_ENABLED", "false").lower() == "true"
+    bitmind_api_key: str | None = os.getenv("BITMIND_API_KEY") or None
+    bitmind_base_url: str = os.getenv("BITMIND_BASE_URL", "https://api.bitmind.ai/oracle/v1")
+    bitmind_timeout_seconds: int = int(os.getenv("BITMIND_TIMEOUT_SECONDS", "180"))
+    bitmind_monthly_quota: int = int(os.getenv("BITMIND_MONTHLY_QUOTA", "100"))
+    bitmind_use_on_inconclusive: bool = os.getenv("BITMIND_USE_ON_INCONCLUSIVE", "true").lower() == "true"
+    bitmind_use_on_suspicious: bool = os.getenv("BITMIND_USE_ON_SUSPICIOUS", "true").lower() == "true"
+    bitmind_always_use_for_paid_users: bool = os.getenv("BITMIND_ALWAYS_USE_FOR_PAID_USERS", "false").lower() == "true"
+    local_fallback_enabled: bool = os.getenv("LOCAL_FALLBACK_ENABLED", "true").lower() == "true"
+    external_provider_policy: str = os.getenv("EXTERNAL_PROVIDER_POLICY", "OnUncertain")
+    bitmind_direct_upload_limit_bytes: int = int(os.getenv("BITMIND_DIRECT_UPLOAD_LIMIT_BYTES", str(10 * 1024 * 1024)))
+    bitmind_max_upload_bytes: int = int(os.getenv("BITMIND_MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
+    bitmind_compression_target_bytes: int = int(os.getenv("BITMIND_COMPRESSION_TARGET_BYTES", str(190 * 1024 * 1024)))
+    ffmpeg_path: str = os.getenv("FFMPEG_PATH", "ffmpeg")
+    ffprobe_path: str = os.getenv("FFPROBE_PATH", "ffprobe")
     enable_mock_fallback: bool = os.getenv("ENABLE_MOCK_FALLBACK", "false").lower() == "true"
     model_id: str = os.getenv("MODEL_ID", "SoraExplora/VideoMae")
     fallback_video_model_id: str = os.getenv("FALLBACK_VIDEO_MODEL_ID", "Naman712/Deep-fake-detection")

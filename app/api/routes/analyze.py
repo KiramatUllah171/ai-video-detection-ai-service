@@ -3,10 +3,11 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.models.requests import AnalyzeFramesRequest
+from app.models.requests import AnalyzeFramesRequest, AnalyzeVideoRequest
 from app.models.responses import AnalyzeFramesResponse
 from app.core.config import settings
 from app.services.model_loader import model_loader
+from app.services.providers import BitMindAiProvider, LocalAiProvider, ProviderOrchestrator
 from app.utils.errors import AiServiceError
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,39 @@ def analyze_frames(request: AnalyzeFramesRequest):
                 "success": False,
                 "error_code": exception.error_code,
                 "message": exception.message,
+            },
+        )
+
+
+@router.post("/analyze-video", response_model=AnalyzeFramesResponse)
+def analyze_video(request: AnalyzeVideoRequest):
+    try:
+        provider_mode = (request.provider_mode or settings.ai_provider or "local").lower()
+        service = model_loader.get_service()
+        orchestrator = ProviderOrchestrator(LocalAiProvider(service), BitMindAiProvider(settings), settings)
+        return orchestrator.analyze_video(request.model_copy(update={"provider_mode": provider_mode}))
+    except AiServiceError as exception:
+        return JSONResponse(
+            status_code=exception.status_code,
+            content={
+                "success": False,
+                "error_code": exception.error_code,
+                "message": exception.message,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "Video analysis failed for video_id=%s job_id=%s provider_mode=%s",
+            request.video_id,
+            request.job_id,
+            request.provider_mode,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error_code": "AI_VIDEO_ANALYSIS_FAILED",
+                "message": "AI video analysis failed.",
             },
         )
 
