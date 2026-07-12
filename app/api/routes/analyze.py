@@ -1,27 +1,72 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.models.requests import AnalyzeFramesRequest
 from app.models.responses import AnalyzeFramesResponse
-from app.services.mock_ai_service import MockAiService
+from app.core.config import settings
+from app.services.model_loader import model_loader
+from app.utils.errors import AiServiceError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analysis"])
-mock_ai_service = MockAiService()
 
 
 @router.post("/analyze-frames", response_model=AnalyzeFramesResponse)
-def analyze_frames(request: AnalyzeFramesRequest) -> AnalyzeFramesResponse:
+def analyze_frames(request: AnalyzeFramesRequest):
     try:
-        return mock_ai_service.analyze_frames(request)
+        if settings.ai_mode == "real" and settings.provider_mode == "local":
+            missing_images = [frame.frame_id for frame in request.frames if not frame.image_base64]
+            if missing_images:
+                raise AiServiceError(
+                    "FRAME_IMAGE_REQUIRED",
+                    "Frame image content is required for real local AI analysis.",
+                    status_code=400,
+                )
+
+        service = model_loader.get_service()
+        return service.analyze_frames(request)
+    except AiServiceError as exception:
+        return JSONResponse(
+            status_code=exception.status_code,
+            content={
+                "success": False,
+                "error_code": exception.error_code,
+                "message": exception.message,
+            },
+        )
+
+
+@router.post("/debug/analyze-frames-detailed")
+def analyze_frames_detailed(request: AnalyzeFramesRequest):
+    if settings.app_env.lower() == "production":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    try:
+        service = model_loader.get_service()
+        response = service.analyze_frames(request)
+        return response.model_dump()
+    except AiServiceError as exception:
+        return JSONResponse(
+            status_code=exception.status_code,
+            content={
+                "success": False,
+                "error_code": exception.error_code,
+                "message": exception.message,
+            },
+        )
     except Exception as exception:
         logger.exception(
-            "Mock frame analysis failed for video_id=%s job_id=%s",
+            "Frame analysis failed for video_id=%s job_id=%s",
             request.video_id,
             request.job_id,
         )
-        raise HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail="Frame analysis failed.",
-        ) from exception
+            content={
+                "success": False,
+                "error_code": "AI_INFERENCE_FAILED",
+                "message": "AI inference failed.",
+            },
+        )

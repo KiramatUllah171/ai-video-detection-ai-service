@@ -35,6 +35,8 @@ def test_analyze_frames_valid_request_returns_200() -> None:
     assert body["video_id"] == 123
     assert body["job_id"] == 456
     assert body["model_version"] == "mock-video-ai-v1"
+    assert body["is_mock"] is True
+    assert body["model_capability"] == "mock"
     assert len(body["frames"]) == 2
     assert "mock AI response" in body["notes"][0]
 
@@ -61,6 +63,7 @@ def test_confidence_is_between_zero_and_one() -> None:
     assert 0 <= body["overall_confidence"] <= 1
     for frame in body["frames"]:
         assert 0 <= frame["confidence"] <= 1
+        assert 0 <= frame["real_probability"] <= 1
 
 
 def test_empty_frames_returns_validation_error() -> None:
