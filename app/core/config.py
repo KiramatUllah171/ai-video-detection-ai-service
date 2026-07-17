@@ -2,13 +2,21 @@ import os
 from dataclasses import dataclass
 
 
+def _provider_mode() -> str:
+    return os.getenv("AI_PROVIDER_MODE", os.getenv("AI_PROVIDER", os.getenv("PROVIDER_MODE", "local"))).lower()
+
+
+def _ai_provider() -> str:
+    return os.getenv("AI_PROVIDER", os.getenv("PROVIDER_MODE", os.getenv("AI_PROVIDER_MODE", "local"))).lower()
+
+
 @dataclass(frozen=True)
 class Settings:
     service_name: str = "ai-video-detection-ai-service"
     app_env: str = os.getenv("APP_ENV", "development")
     ai_mode: str = os.getenv("AI_MODE", "mock").lower()
-    provider_mode: str = os.getenv("AI_PROVIDER_MODE", "local").lower()
-    ai_provider: str = os.getenv("AI_PROVIDER", os.getenv("AI_PROVIDER_MODE", "local")).lower()
+    provider_mode: str = _provider_mode()
+    ai_provider: str = _ai_provider()
     bitmind_enabled: bool = os.getenv("BITMIND_ENABLED", "false").lower() == "true"
     bitmind_api_key: str | None = os.getenv("BITMIND_API_KEY") or None
     bitmind_base_url: str = os.getenv("BITMIND_BASE_URL", "https://api.bitmind.ai/oracle/v1")

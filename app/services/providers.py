@@ -357,10 +357,19 @@ class ProviderOrchestrator(BaseAiProvider):
 
     def analyze_video(self, request: AnalyzeVideoRequest) -> AnalyzeFramesResponse:
         mode = (request.provider_mode or self.settings.ai_provider or "local").lower()
+        logger.info(
+            "Provider orchestrator selected mode=%s for video_id=%s job_id=%s local_fallback_enabled=%s",
+            mode,
+            request.video_id,
+            request.job_id,
+            self.settings.local_fallback_enabled,
+        )
         if mode == "bitmind":
+            logger.info("Using BitMind provider for video_id=%s job_id=%s", request.video_id, request.job_id)
             return self._bitmind_with_fallback(request, None, "bitmind")
         if mode == "hybrid":
             return self._hybrid(request)
+        logger.info("Using local provider for video_id=%s job_id=%s", request.video_id, request.job_id)
         return self.local_provider.analyze_video(request.model_copy(update={"provider_mode": "local"}))
 
     def _hybrid(self, request: AnalyzeVideoRequest) -> AnalyzeFramesResponse:
