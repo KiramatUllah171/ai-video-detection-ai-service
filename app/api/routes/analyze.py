@@ -83,7 +83,7 @@ def analyze_video(request: AnalyzeVideoRequest):
             content={
                 "success": False,
                 "error_code": "BITMIND_UNAVAILABLE",
-                "message": f"External BitMind verification failed: {exception.message}",
+                "message": "External video analysis is temporarily unavailable.",
             },
         )
     except Exception:

@@ -404,7 +404,7 @@ class ProviderOrchestrator(BaseAiProvider):
             message = exception.message if isinstance(exception, BitMindProviderError) else "BitMind request failed."
             error_metadata = exception.raw_response if isinstance(exception, BitMindProviderError) and isinstance(exception.raw_response, dict) else {}
             if not self.settings.local_fallback_enabled:
-                raise AiServiceError("BITMIND_UNAVAILABLE", "External BitMind verification failed.", status_code=502)
+                raise AiServiceError("BITMIND_UNAVAILABLE", "External video analysis is temporarily unavailable.", status_code=502)
             fallback = local_result or self.local_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
             warnings = [
                 *fallback.warnings,

@@ -7,7 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.models.requests import AnalyzeFrameItem, AnalyzeVideoRequest
 from app.models.responses import AnalyzeFramesResponse, FrameAnalysisResult
-from app.services.providers import BitMindAiProvider, LocalAiProvider, ProviderOrchestrator
+from app.services.providers import BitMindAiProvider, BitMindProviderError, LocalAiProvider, ProviderOrchestrator
 
 
 class FakeHttpClient:
@@ -225,6 +225,38 @@ def test_bitmind_failed_status_returns_local_fallback(monkeypatch, tmp_path):
     assert response.fallback_used is True
     assert response.final_decision_source == "FallbackLocal"
     assert response.external_provider_result["provider_status"] == "Failed"
+
+
+def test_bitmind_only_route_returns_safe_error_message(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import analyze
+    from app.main import app
+
+    def fail_bitmind(self, request):
+        raise BitMindProviderError("BitMind returned HTTP 401.", 401, {"message": "unauthorized"})
+
+    monkeypatch.setattr(analyze, "settings", make_settings(local_fallback_enabled=False))
+    monkeypatch.setattr(BitMindAiProvider, "analyze_video", fail_bitmind)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+
+    response = TestClient(app).post(
+        "/analyze-video",
+        json={
+            "video_id": 1,
+            "job_id": 2,
+            "provider_mode": "bitmind",
+            "original_video_path": str(video),
+            "frames": [{"frame_id": 1, "frame_url": "frames/1.jpg", "frame_index": 0, "image_base64": "abc"}],
+        },
+    )
+
+    body = response.json()
+    assert response.status_code == 502
+    assert body["error_code"] == "BITMIND_UNAVAILABLE"
+    assert body["message"] == "External video analysis is temporarily unavailable."
+    assert "HTTP 401" not in body["message"]
 
 
 def test_bitmind_timeout_returns_provider_error_fallback(monkeypatch, tmp_path):
