@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.auth import require_internal_api_key
 from app.core.config import settings
 from app.models.responses import HealthResponse, ModelDiagnosticsResponse
 from app.services.model_loader import model_loader
@@ -17,7 +18,7 @@ def health() -> HealthResponse:
     )
 
 
-@router.get("/model-diagnostics", response_model=ModelDiagnosticsResponse)
+@router.get("/model-diagnostics", response_model=ModelDiagnosticsResponse, dependencies=[Depends(require_internal_api_key)])
 def model_diagnostics() -> ModelDiagnosticsResponse:
     model_health = model_loader.health()
     return ModelDiagnosticsResponse(
@@ -27,7 +28,7 @@ def model_diagnostics() -> ModelDiagnosticsResponse:
     )
 
 
-@router.post("/model-diagnostics/load")
+@router.post("/model-diagnostics/load", dependencies=[Depends(require_internal_api_key)])
 def force_load_model() -> dict:
     if settings.app_env.lower() == "production":
         raise HTTPException(status_code=404, detail="Not found")
