@@ -60,6 +60,11 @@ class FailingHttpClient(FakeHttpClient):
         return httpx.Response(500, json={"error": {"message": "provider failed"}})
 
 
+class UnauthorizedHttpClient(FakeHttpClient):
+    def post(self, url, headers=None, **kwargs):
+        return httpx.Response(401, json={"error": {"message": "Invalid API key"}})
+
+
 class SlowHttpClient(FakeHttpClient):
     def post(self, url, headers=None, **kwargs):
         raise httpx.TimeoutException("timeout")
@@ -131,6 +136,33 @@ def test_bitmind_client_builds_authenticated_request_without_exposing_key(monkey
     assert FakeHttpClient.last_headers["Authorization"] == "Bearer secret-test-key"
     assert FakeHttpClient.last_headers["x-bitmind-application"] == "oracle-api"
     assert "secret-test-key" not in response.model_dump_json()
+
+
+def test_bitmind_rejects_local_file_outside_allowed_roots(tmp_path):
+    allowed_root = tmp_path / "allowed"
+    outside_root = tmp_path / "outside"
+    allowed_root.mkdir()
+    outside_root.mkdir()
+    video = outside_root / "video.mp4"
+    video.write_bytes(b"video")
+
+    provider = BitMindAiProvider(make_settings(ai_allowed_video_roots_csv=str(allowed_root)))
+
+    with pytest.raises(BitMindProviderError) as exception:
+        provider.analyze_video(make_request(video))
+
+    assert "outside the allowed analysis work directories" in exception.value.message
+
+
+def test_bitmind_requires_allowed_roots_for_local_paths_in_production(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    provider = BitMindAiProvider(make_settings(app_env="production", ai_allowed_video_roots_csv=""))
+
+    with pytest.raises(BitMindProviderError) as exception:
+        provider.analyze_video(make_request(video))
+
+    assert "AI_ALLOWED_VIDEO_ROOTS" in exception.value.message
 
 
 def test_bitmind_response_normalization_maps_common_schema(monkeypatch, tmp_path):
@@ -225,6 +257,19 @@ def test_bitmind_failed_status_returns_local_fallback(monkeypatch, tmp_path):
     assert response.fallback_used is True
     assert response.final_decision_source == "FallbackLocal"
     assert response.external_provider_result["provider_status"] == "Failed"
+
+
+def test_bitmind_unauthorized_uses_auth_error_code_and_safe_message(monkeypatch, tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr("app.services.providers.httpx.Client", UnauthorizedHttpClient)
+
+    with pytest.raises(BitMindProviderError) as exception:
+        BitMindAiProvider(make_settings()).analyze_video(make_request(video))
+
+    assert exception.value.status_code == 401
+    assert exception.value.error_code == "BITMIND_AUTH_FAILED"
+    assert exception.value.message == "provider authentication failed."
 
 
 def test_bitmind_only_route_returns_safe_error_message(monkeypatch, tmp_path):

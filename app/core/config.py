@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 def _provider_mode() -> str:
@@ -14,6 +15,8 @@ def _ai_provider() -> str:
 class Settings:
     service_name: str = "ai-video-detection-ai-service"
     app_env: str = os.getenv("APP_ENV", "development")
+    ai_service_api_key: str | None = os.getenv("AI_SERVICE_API_KEY") or None
+    ai_allowed_video_roots_csv: str = os.getenv("AI_ALLOWED_VIDEO_ROOTS", "")
     ai_mode: str = os.getenv("AI_MODE", "mock").lower()
     provider_mode: str = _provider_mode()
     ai_provider: str = _ai_provider()
@@ -80,6 +83,19 @@ class Settings:
     hf_timeout_seconds: int = int(os.getenv("HF_TIMEOUT_SECONDS", "60"))
     model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", "./models/cache")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() == "production"
+
+    @property
+    def require_api_key(self) -> bool:
+        return self.is_production or bool(self.ai_service_api_key)
+
+    @property
+    def allowed_video_roots(self) -> list[Path]:
+        values = [value.strip() for value in self.ai_allowed_video_roots_csv.split(";")]
+        return [Path(value).resolve() for value in values if value]
 
     @property
     def effective_model_version(self) -> str:

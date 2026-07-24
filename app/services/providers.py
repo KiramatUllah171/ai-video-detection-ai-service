@@ -21,11 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 class BitMindProviderError(Exception):
-    def __init__(self, message: str, status_code: int | None = None, raw_response: dict | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        raw_response: dict | None = None,
+        error_code: str = "BITMIND_UNAVAILABLE",
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.raw_response = raw_response
+        self.error_code = error_code
 
 
 class BaseAiProvider:
@@ -199,14 +206,15 @@ class BitMindAiProvider(BaseAiProvider):
 
         raw = _response_json(response)
         if response.status_code >= 400:
-            message = _error_message(raw) or f"BitMind returned HTTP {response.status_code}."
-            raise BitMindProviderError(message, response.status_code, raw)
+            message = _safe_error_message(_error_message(raw) or f"BitMind returned HTTP {response.status_code}.", response.status_code)
+            raise BitMindProviderError(message, response.status_code, raw, _bitmind_error_code(response.status_code))
         return raw, transfer_metadata
 
     def _prepare_video_file(self, request: AnalyzeVideoRequest) -> tuple[Path, dict[str, Any], Path | None]:
         path = Path(request.original_video_path or "")
         if not path.exists():
             raise BitMindProviderError("Local video file was not found.")
+        self._validate_video_path(path)
 
         original_size = path.stat().st_size
         metadata: dict[str, Any] = {
@@ -245,6 +253,17 @@ class BitMindAiProvider(BaseAiProvider):
                 "Video exceeded BitMind upload limit and compression failed. Local analysis was used.",
                 raw_response=metadata,
             ) from exception
+
+    def _validate_video_path(self, path: Path) -> None:
+        allowed_roots = self.settings.allowed_video_roots
+        if not allowed_roots:
+            if self.settings.is_production:
+                raise BitMindProviderError("AI_ALLOWED_VIDEO_ROOTS must be configured before local video paths are accepted.")
+            return
+
+        resolved_path = path.resolve()
+        if not any(resolved_path == root or resolved_path.is_relative_to(root) for root in allowed_roots):
+            raise BitMindProviderError("Local video path is outside the allowed analysis work directories.")
 
     def _compress_for_bitmind(self, input_path: Path) -> tuple[Path, int]:
         duration = self._probe_duration_seconds(input_path)
@@ -402,9 +421,10 @@ class ProviderOrchestrator(BaseAiProvider):
             return self.bitmind_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
         except (BitMindProviderError, httpx.HTTPError) as exception:
             message = exception.message if isinstance(exception, BitMindProviderError) else "BitMind request failed."
+            error_code = exception.error_code if isinstance(exception, BitMindProviderError) else "BITMIND_UNAVAILABLE"
             error_metadata = exception.raw_response if isinstance(exception, BitMindProviderError) and isinstance(exception.raw_response, dict) else {}
             if not self.settings.local_fallback_enabled:
-                raise AiServiceError("BITMIND_UNAVAILABLE", "External video analysis is temporarily unavailable.", status_code=502)
+                raise AiServiceError(error_code, f"External video analysis failed: {_safe_error_message(message, getattr(exception, 'status_code', None))}", status_code=502)
             fallback = local_result or self.local_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
             warnings = [
                 *fallback.warnings,
@@ -489,6 +509,28 @@ def _error_message(payload: dict[str, Any]) -> str | None:
     if isinstance(error, dict):
         return str(error.get("message") or error.get("code") or "")
     return str(payload.get("message") or "") or None
+
+
+def _bitmind_error_code(status_code: int | None) -> str:
+    return {
+        401: "BITMIND_AUTH_FAILED",
+        403: "BITMIND_FORBIDDEN",
+        429: "BITMIND_RATE_LIMITED",
+    }.get(status_code, "BITMIND_UNAVAILABLE")
+
+
+def _safe_error_message(message: str, status_code: int | None = None) -> str:
+    cleaned = " ".join(str(message or "").split())
+    if not cleaned:
+        return "provider returned no error details."
+    lowered = cleaned.lower()
+    if status_code == 401 or "unauthorized" in lowered or "authorization" in lowered or "api key" in lowered or "token" in lowered:
+        return "provider authentication failed."
+    if status_code == 403 or "forbidden" in lowered or "permission" in lowered:
+        return "provider rejected this request."
+    if status_code == 429 or "rate limit" in lowered or "too many requests" in lowered:
+        return "provider rate limit was reached."
+    return cleaned[:300]
 
 
 def _normalize_bitmind_score(is_ai: Any, confidence: float | None) -> dict[str, Any]:

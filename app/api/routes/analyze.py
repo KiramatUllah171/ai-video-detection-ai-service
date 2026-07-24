@@ -1,10 +1,11 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.models.requests import AnalyzeFramesRequest, AnalyzeVideoRequest
 from app.models.responses import AnalyzeFramesResponse
+from app.core.auth import require_internal_api_key
 from app.core.config import settings
 from app.services.model_loader import model_loader
 from app.services.providers import BitMindAiProvider, BitMindProviderError, LocalAiProvider, ProviderOrchestrator
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analysis"])
 
 
-@router.post("/analyze-frames", response_model=AnalyzeFramesResponse)
+@router.post("/analyze-frames", response_model=AnalyzeFramesResponse, dependencies=[Depends(require_internal_api_key)])
 def analyze_frames(request: AnalyzeFramesRequest):
     try:
         if settings.ai_mode == "real" and settings.provider_mode == "local":
@@ -39,7 +40,7 @@ def analyze_frames(request: AnalyzeFramesRequest):
         )
 
 
-@router.post("/analyze-video", response_model=AnalyzeFramesResponse)
+@router.post("/analyze-video", response_model=AnalyzeFramesResponse, dependencies=[Depends(require_internal_api_key)])
 def analyze_video(request: AnalyzeVideoRequest):
     try:
         provider_mode = (request.provider_mode or settings.ai_provider or "local").lower()
@@ -82,7 +83,7 @@ def analyze_video(request: AnalyzeVideoRequest):
             status_code=502,
             content={
                 "success": False,
-                "error_code": "BITMIND_UNAVAILABLE",
+                "error_code": exception.error_code,
                 "message": "External video analysis is temporarily unavailable.",
             },
         )
@@ -103,7 +104,7 @@ def analyze_video(request: AnalyzeVideoRequest):
         )
 
 
-@router.post("/debug/analyze-frames-detailed")
+@router.post("/debug/analyze-frames-detailed", dependencies=[Depends(require_internal_api_key)])
 def analyze_frames_detailed(request: AnalyzeFramesRequest):
     if settings.app_env.lower() == "production":
         raise HTTPException(status_code=404, detail="Not found")
