@@ -30,3 +30,35 @@ def test_mock_fallback_returns_mock_service() -> None:
     service = loader._real_model_failure("MODEL_LOAD_FAILED", "failed")
 
     assert service.model_capability == "mock"
+
+
+def test_production_rejects_mock_ai_mode() -> None:
+    production_settings = replace(
+        settings,
+        app_env="production",
+        ai_service_api_key="x" * 32,
+        ai_mode="mock",
+        enable_mock_fallback=False,
+        provider_mode="local",
+        external_provider_policy="OnUncertain",
+    )
+
+    assert "AI_MODE=mock is not allowed in production." in production_settings.production_configuration_errors()
+
+
+def test_production_accepts_real_hybrid_configuration() -> None:
+    production_settings = replace(
+        settings,
+        app_env="production",
+        ai_service_api_key="x" * 32,
+        ai_mode="real",
+        provider_mode="hybrid",
+        external_provider_policy="OnUncertain",
+        bitmind_enabled=True,
+        bitmind_api_key="bitmind-secret",
+        ai_allowed_video_roots_csv="D:/app/storage/work",
+        enable_mock_fallback=False,
+        ai_debug_output=False,
+    )
+
+    assert production_settings.production_configuration_errors() == []
