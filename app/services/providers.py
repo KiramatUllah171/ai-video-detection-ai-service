@@ -477,7 +477,7 @@ def _combine_hybrid(local_result: AnalyzeFramesResponse, bitmind_result: Analyze
 
 
 def _should_use_bitmind(local_result: AnalyzeFramesResponse, current_settings: Settings) -> bool:
-    policy = current_settings.external_provider_policy.lower()
+    policy = current_settings.normalized_external_provider_policy
     if policy == "disabled":
         return False
     if policy == "always":

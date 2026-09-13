@@ -114,5 +114,46 @@ class Settings:
         values = [value.strip() for value in self.frame_model_ids_csv.split(",")]
         return [value for value in values if value]
 
+    @property
+    def normalized_provider_mode(self) -> str:
+        value = self.provider_mode.strip().replace("_", "").lower()
+        if value in {"bitmind", "external"}:
+            return "bitmind"
+        if value == "hybrid":
+            return "hybrid"
+        return "local"
+
+    @property
+    def normalized_external_provider_policy(self) -> str:
+        value = self.external_provider_policy.strip().replace("_", "").lower()
+        return "disabled" if value == "never" else value
+
+    def production_configuration_errors(self) -> list[str]:
+        if not self.is_production:
+            return []
+
+        errors: list[str] = []
+        if not self.ai_service_api_key or len(self.ai_service_api_key) < 32:
+            errors.append("AI_SERVICE_API_KEY must be configured with at least 32 characters.")
+        if self.ai_mode == "mock":
+            errors.append("AI_MODE=mock is not allowed in production.")
+        if self.enable_mock_fallback:
+            errors.append("ENABLE_MOCK_FALLBACK must be false in production.")
+        if self.ai_debug_output:
+            errors.append("AI_DEBUG_OUTPUT must be false in production.")
+        if self.normalized_provider_mode not in {"local", "bitmind", "hybrid"}:
+            errors.append("AI provider mode must be one of local, bitmind, or hybrid.")
+        if self.normalized_external_provider_policy not in {"always", "onuncertain", "disabled"}:
+            errors.append("EXTERNAL_PROVIDER_POLICY must be Always, OnUncertain, Disabled, or Never.")
+        if self.normalized_provider_mode in {"bitmind", "hybrid"}:
+            if not self.bitmind_enabled:
+                errors.append("BITMIND_ENABLED must be true when provider mode is bitmind or hybrid.")
+            if not self.bitmind_api_key:
+                errors.append("BITMIND_API_KEY must be configured when provider mode is bitmind or hybrid.")
+            if not self.ai_allowed_video_roots_csv.strip():
+                errors.append("AI_ALLOWED_VIDEO_ROOTS must be configured before local video paths are accepted.")
+
+        return errors
+
 
 settings = Settings()

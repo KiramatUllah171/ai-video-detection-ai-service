@@ -8,6 +8,10 @@ from app.core.logging import configure_logging
 
 def create_app() -> FastAPI:
     configure_logging()
+    production_errors = settings.production_configuration_errors()
+    if production_errors:
+        raise RuntimeError("Invalid production AI service configuration: " + "; ".join(production_errors))
+
     app = FastAPI(
         title="AI Video Detection AI Service",
         version=settings.effective_model_version,
