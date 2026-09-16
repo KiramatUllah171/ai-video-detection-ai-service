@@ -12,6 +12,7 @@ from app.services.providers import BitMindAiProvider, BitMindProviderError, Loca
 
 class FakeHttpClient:
     last_headers = {}
+    last_url = None
     sent_file_name = None
     sent_file_bytes = None
 
@@ -25,6 +26,7 @@ class FakeHttpClient:
         return False
 
     def post(self, url, headers=None, **kwargs):
+        FakeHttpClient.last_url = url
         FakeHttpClient.last_headers = headers or {}
         files = kwargs.get("files") or {}
         if "video" in files:
@@ -106,7 +108,7 @@ def make_settings(**overrides):
     values = {
         "bitmind_enabled": True,
         "bitmind_api_key": "secret-test-key",
-        "bitmind_base_url": "https://api.bitmind.ai/oracle/v1",
+        "bitmind_base_url": "https://api.bitmind.ai",
         "local_fallback_enabled": True,
         "external_provider_policy": "Always",
     }
@@ -133,9 +135,20 @@ def test_bitmind_client_builds_authenticated_request_without_exposing_key(monkey
 
     response = BitMindAiProvider(make_settings()).analyze_video(make_request(video))
 
+    assert FakeHttpClient.last_url == "https://api.bitmind.ai/detect-video"
     assert FakeHttpClient.last_headers["Authorization"] == "Bearer secret-test-key"
     assert FakeHttpClient.last_headers["x-bitmind-application"] == "oracle-api"
     assert "secret-test-key" not in response.model_dump_json()
+
+
+def test_bitmind_client_normalizes_legacy_base_url(monkeypatch, tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr("app.services.providers.httpx.Client", FakeHttpClient)
+
+    BitMindAiProvider(make_settings(bitmind_base_url="https://api.bitmind.ai/34")).analyze_video(make_request(video))
+
+    assert FakeHttpClient.last_url == "https://api.bitmind.ai/detect-video"
 
 
 def test_bitmind_rejects_local_file_outside_allowed_roots(tmp_path):

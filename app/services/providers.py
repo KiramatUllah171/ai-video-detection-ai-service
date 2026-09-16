@@ -134,7 +134,7 @@ class BitMindAiProvider(BaseAiProvider):
         )
 
     def _detect(self, request: AnalyzeVideoRequest) -> dict[str, Any]:
-        base_url = self.settings.bitmind_base_url.rstrip("/")
+        base_url = _normalize_bitmind_base_url(self.settings.bitmind_base_url)
         headers = {
             "Authorization": f"Bearer {self.settings.bitmind_api_key}",
             "x-bitmind-application": self.application_header,
@@ -159,7 +159,7 @@ class BitMindAiProvider(BaseAiProvider):
                     bool(request.video_url),
                 )
                 response = client.post(
-                    f"{base_url}/34/detect-video",
+                    f"{base_url}/detect-video",
                     headers={**headers, "Content-Type": "application/json"},
                     json={"video": request.video_url, "rich": True},
                 )
@@ -178,7 +178,7 @@ class BitMindAiProvider(BaseAiProvider):
                         )
                         video_url = self._upload_large_video(client, base_url, headers, send_path)
                         response = client.post(
-                            f"{base_url}/34/detect-video",
+                            f"{base_url}/detect-video",
                             headers={**headers, "Content-Type": "application/json"},
                             json={"video": video_url, "rich": True},
                         )
@@ -195,7 +195,7 @@ class BitMindAiProvider(BaseAiProvider):
                         )
                         with send_path.open("rb") as file_handle:
                             response = client.post(
-                                f"{base_url}/34/detect-video",
+                                f"{base_url}/detect-video",
                                 headers=headers,
                                 files={"video": (send_path.name, file_handle, content_type)},
                                 data={"rich": "true"},
@@ -349,7 +349,7 @@ class BitMindAiProvider(BaseAiProvider):
     def _upload_large_video(self, client: httpx.Client, base_url: str, headers: dict[str, str], path: Path) -> str:
         content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
         upload_response = client.post(
-            f"{base_url}/34/get-video-upload-url",
+            f"{base_url}/get-video-upload-url",
             headers={**headers, "Content-Type": "application/json"},
             json={"filename": path.name, "contentType": content_type},
         )
@@ -517,6 +517,14 @@ def _bitmind_error_code(status_code: int | None) -> str:
         403: "BITMIND_FORBIDDEN",
         429: "BITMIND_RATE_LIMITED",
     }.get(status_code, "BITMIND_UNAVAILABLE")
+
+
+def _normalize_bitmind_base_url(base_url: str) -> str:
+    normalized = (base_url or "https://api.bitmind.ai").rstrip("/")
+    for suffix in ("/oracle/v1", "/34"):
+        if normalized.lower().endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip("/")
+    return normalized or "https://api.bitmind.ai"
 
 
 def _safe_error_message(message: str, status_code: int | None = None) -> str:

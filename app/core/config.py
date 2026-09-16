@@ -22,7 +22,7 @@ class Settings:
     ai_provider: str = _ai_provider()
     bitmind_enabled: bool = os.getenv("BITMIND_ENABLED", "false").lower() == "true"
     bitmind_api_key: str | None = os.getenv("BITMIND_API_KEY") or None
-    bitmind_base_url: str = os.getenv("BITMIND_BASE_URL", "https://api.bitmind.ai/oracle/v1")
+    bitmind_base_url: str = os.getenv("BITMIND_BASE_URL", "https://api.bitmind.ai")
     bitmind_timeout_seconds: int = int(os.getenv("BITMIND_TIMEOUT_SECONDS", "180"))
     bitmind_monthly_quota: int = int(os.getenv("BITMIND_MONTHLY_QUOTA", "100"))
     bitmind_use_on_inconclusive: bool = os.getenv("BITMIND_USE_ON_INCONCLUSIVE", "true").lower() == "true"
