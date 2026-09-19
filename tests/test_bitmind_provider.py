@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.models.requests import AnalyzeFrameItem, AnalyzeVideoRequest
 from app.models.responses import AnalyzeFramesResponse, FrameAnalysisResult
 from app.services.providers import BitMindAiProvider, BitMindProviderError, LocalAiProvider, ProviderOrchestrator
+from app.utils.errors import AiServiceError
 
 
 class FakeHttpClient:
@@ -104,6 +105,55 @@ class StaticLocalService:
         )
 
 
+class HighConfidenceLocalService(StaticLocalService):
+    def analyze_frames(self, request):
+        response = super().analyze_frames(request)
+        return response.model_copy(update={
+            "overall_ai_score": 0.10,
+            "real_probability": 0.90,
+            "overall_confidence": 0.92,
+            "label_hint": "LikelyReal",
+        })
+
+
+class CountingLocalProvider:
+    def __init__(self, response: AnalyzeFramesResponse | None = None, error: AiServiceError | None = None) -> None:
+        self.response = response
+        self.error = error
+        self.calls = 0
+
+    def analyze_video(self, request: AnalyzeVideoRequest) -> AnalyzeFramesResponse:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        if self.response is None:
+            raise AssertionError("CountingLocalProvider requires a response or error.")
+        return self.response.model_copy(update={
+            "video_id": request.video_id,
+            "job_id": request.job_id,
+            "provider_mode": request.provider_mode,
+        })
+
+
+class FakeBitMindProvider:
+    def __init__(self, response: AnalyzeFramesResponse | None = None, error: Exception | None = None) -> None:
+        self.response = response
+        self.error = error
+        self.calls = 0
+
+    def analyze_video(self, request: AnalyzeVideoRequest) -> AnalyzeFramesResponse:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        if self.response is None:
+            raise AssertionError("FakeBitMindProvider requires a response or error.")
+        return self.response.model_copy(update={
+            "video_id": request.video_id,
+            "job_id": request.job_id,
+            "provider_mode": request.provider_mode,
+        })
+
+
 def make_settings(**overrides):
     values = {
         "bitmind_enabled": True,
@@ -126,6 +176,141 @@ def make_request(path: Path):
             AnalyzeFrameItem(frame_id=1, frame_url="frames/1.jpg", frame_index=0, image_base64="abc")
         ],
     )
+
+
+def make_bitmind_response() -> AnalyzeFramesResponse:
+    external_result = {
+        "provider_name": "BitMind",
+        "provider_status": "Completed",
+        "provider_score": 0.90,
+        "provider_confidence": 0.90,
+    }
+    return AnalyzeFramesResponse(
+        video_id=1,
+        job_id=2,
+        model_id="bitmind-subnet-34",
+        model_version="bitmind-oracle-v1-sn34",
+        model_capability="external_video",
+        is_mock=False,
+        overall_ai_score=0.90,
+        real_probability=0.10,
+        overall_confidence=0.90,
+        label_hint="LikelyAiGenerated",
+        frames=[],
+        notes=["external"],
+        warnings=["external warning"],
+        provider="BitMind",
+        provider_mode="hybrid",
+        external_provider_result=external_result,
+        bitmind_result=external_result,
+        final_decision_source="BitMind",
+    )
+
+
+def test_hybrid_high_confidence_local_skips_bitmind(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    bitmind = FakeBitMindProvider(make_bitmind_response())
+    orchestrator = ProviderOrchestrator(
+        LocalAiProvider(HighConfidenceLocalService()),
+        bitmind,
+        make_settings(external_provider_policy="OnUncertain"),
+    )
+
+    response = orchestrator.analyze_video(make_request(video).model_copy(update={"provider_mode": "hybrid"}))
+
+    assert response.provider == "Local"
+    assert response.provider_mode == "hybrid"
+    assert response.final_decision_source == "Local"
+    assert response.external_provider_result["provider_status"] == "Skipped"
+    assert bitmind.calls == 0
+
+
+def test_hybrid_uncertain_local_calls_bitmind_and_combines(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    bitmind = FakeBitMindProvider(make_bitmind_response())
+    orchestrator = ProviderOrchestrator(
+        LocalAiProvider(StaticLocalService()),
+        bitmind,
+        make_settings(external_provider_policy="OnUncertain"),
+    )
+
+    response = orchestrator.analyze_video(make_request(video).model_copy(update={"provider_mode": "hybrid"}))
+
+    assert bitmind.calls == 1
+    assert response.provider == "Hybrid"
+    assert response.provider_mode == "hybrid"
+    assert response.final_decision_source == "Hybrid"
+    assert response.local_result is not None
+    assert response.bitmind_result is not None
+
+
+def test_hybrid_without_local_frame_images_calls_bitmind(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    local = CountingLocalProvider(error=AiServiceError("FRAME_IMAGE_REQUIRED", "missing frames", status_code=400))
+    bitmind = FakeBitMindProvider(make_bitmind_response())
+    orchestrator = ProviderOrchestrator(local, bitmind, make_settings(external_provider_policy="OnUncertain"))
+    request = make_request(video).model_copy(update={"provider_mode": "hybrid", "frames": []})
+
+    response = orchestrator.analyze_video(request)
+
+    assert local.calls == 0
+    assert bitmind.calls == 1
+    assert response.provider == "BitMind"
+    assert response.provider_mode == "hybrid"
+    assert response.final_decision_source == "BitMind"
+    assert response.external_provider_result["local_provider_status"] == "Skipped"
+    assert "Local analysis skipped" in " ".join(response.warnings)
+
+
+def test_hybrid_local_frame_required_error_calls_bitmind(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    local = CountingLocalProvider(error=AiServiceError("FRAME_IMAGE_REQUIRED", "missing frame image", status_code=400))
+    bitmind = FakeBitMindProvider(make_bitmind_response())
+    orchestrator = ProviderOrchestrator(local, bitmind, make_settings(external_provider_policy="OnUncertain"))
+
+    response = orchestrator.analyze_video(make_request(video).model_copy(update={"provider_mode": "hybrid"}))
+
+    assert local.calls == 1
+    assert bitmind.calls == 1
+    assert response.provider == "BitMind"
+    assert response.provider_mode == "hybrid"
+    assert response.final_decision_source == "BitMind"
+    assert response.external_provider_result["local_provider_error_code"] == "FRAME_IMAGE_REQUIRED"
+
+
+def test_hybrid_without_local_frame_images_preserves_bitmind_failure(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    local = CountingLocalProvider(error=AiServiceError("FRAME_IMAGE_REQUIRED", "missing frames", status_code=400))
+    bitmind = FakeBitMindProvider(error=BitMindProviderError("provider failed", 500, {"error": "failed"}))
+    orchestrator = ProviderOrchestrator(local, bitmind, make_settings(external_provider_policy="OnUncertain"))
+    request = make_request(video).model_copy(update={"provider_mode": "hybrid", "frames": []})
+
+    with pytest.raises(AiServiceError) as exception:
+        orchestrator.analyze_video(request)
+
+    assert local.calls == 0
+    assert bitmind.calls == 1
+    assert exception.value.error_code == "BITMIND_UNAVAILABLE"
+    assert "External video analysis failed" in exception.value.message
+
+
+def test_local_mode_still_uses_local_provider_only(tmp_path):
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    bitmind = FakeBitMindProvider(make_bitmind_response())
+    orchestrator = ProviderOrchestrator(LocalAiProvider(StaticLocalService()), bitmind, make_settings())
+
+    response = orchestrator.analyze_video(make_request(video).model_copy(update={"provider_mode": "local"}))
+
+    assert response.provider == "Local"
+    assert response.provider_mode == "local"
+    assert response.final_decision_source == "Local"
+    assert bitmind.calls == 0
 
 
 def test_bitmind_client_builds_authenticated_request_without_exposing_key(monkeypatch, tmp_path):

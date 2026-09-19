@@ -392,7 +392,28 @@ class ProviderOrchestrator(BaseAiProvider):
         return self.local_provider.analyze_video(request.model_copy(update={"provider_mode": "local"}))
 
     def _hybrid(self, request: AnalyzeVideoRequest) -> AnalyzeFramesResponse:
-        local_result = self.local_provider.analyze_video(request.model_copy(update={"provider_mode": "hybrid"}))
+        local_result: AnalyzeFramesResponse | None = None
+        if _local_analysis_inputs_available(request):
+            try:
+                local_result = self.local_provider.analyze_video(request.model_copy(update={"provider_mode": "hybrid"}))
+            except AiServiceError as exception:
+                if exception.error_code != "FRAME_IMAGE_REQUIRED":
+                    raise
+                logger.info(
+                    "Hybrid local analysis unavailable for video_id=%s job_id=%s because frame images were missing.",
+                    request.video_id,
+                    request.job_id,
+                )
+
+        if local_result is None:
+            bitmind_result = self._bitmind_with_fallback(
+                request,
+                local_result,
+                "hybrid",
+                allow_local_fallback_attempt=False,
+            )
+            return _mark_local_unavailable(bitmind_result)
+
         if not _should_use_bitmind(local_result, self.settings):
             return local_result.model_copy(update={
                 "provider": "Local",
@@ -416,6 +437,7 @@ class ProviderOrchestrator(BaseAiProvider):
         request: AnalyzeVideoRequest,
         local_result: AnalyzeFramesResponse | None,
         mode: str,
+        allow_local_fallback_attempt: bool = True,
     ) -> AnalyzeFramesResponse:
         try:
             return self.bitmind_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
@@ -425,7 +447,16 @@ class ProviderOrchestrator(BaseAiProvider):
             error_metadata = exception.raw_response if isinstance(exception, BitMindProviderError) and isinstance(exception.raw_response, dict) else {}
             if not self.settings.local_fallback_enabled:
                 raise AiServiceError(error_code, f"External video analysis failed: {_safe_error_message(message, getattr(exception, 'status_code', None))}", status_code=502)
-            fallback = local_result or self.local_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
+            if local_result is None and (not allow_local_fallback_attempt or not _local_analysis_inputs_available(request)):
+                raise AiServiceError(error_code, f"External video analysis failed: {_safe_error_message(message, getattr(exception, 'status_code', None))}", status_code=502)
+
+            try:
+                fallback = local_result or self.local_provider.analyze_video(request.model_copy(update={"provider_mode": mode}))
+            except AiServiceError as local_exception:
+                if local_exception.error_code != "FRAME_IMAGE_REQUIRED":
+                    raise
+                raise AiServiceError(error_code, f"External video analysis failed: {_safe_error_message(message, getattr(exception, 'status_code', None))}", status_code=502) from exception
+
             warnings = [
                 *fallback.warnings,
                 message if "compression failed" in message.lower() else "External BitMind verification failed/unavailable. Local analysis was used.",
@@ -445,6 +476,24 @@ class ProviderOrchestrator(BaseAiProvider):
                 "local_result": fallback.model_dump(exclude={"local_result", "bitmind_result"}),
                 "final_decision_source": "FallbackLocal",
             })
+
+
+def _local_analysis_inputs_available(request: AnalyzeVideoRequest) -> bool:
+    return bool(request.frames) and all(bool((frame.image_base64 or "").strip()) for frame in request.frames)
+
+
+def _mark_local_unavailable(response: AnalyzeFramesResponse) -> AnalyzeFramesResponse:
+    warning = "Local analysis skipped because extracted frame images were unavailable."
+    return response.model_copy(update={
+        "provider_mode": "hybrid",
+        "warnings": list(dict.fromkeys([*response.warnings, warning])),
+        "external_provider_result": {
+            **(response.external_provider_result or {}),
+            "local_provider_status": "Skipped",
+            "local_provider_error_code": "FRAME_IMAGE_REQUIRED",
+            "local_provider_error_message": warning,
+        },
+    })
 
 
 def _combine_hybrid(local_result: AnalyzeFramesResponse, bitmind_result: AnalyzeFramesResponse) -> AnalyzeFramesResponse:
